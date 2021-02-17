@@ -1,0 +1,89 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+
+import os
+import boto3
+import argparse
+import inquirer
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-r", "--region", help="If a single region is provided, only clusters in that region will be searched")
+parser.add_argument("-p", "--profile", help="Use this profile to search for clusters")
+parser.add_argument("-v", "--verbose", help="Verbose output", action="store_true", default=False)
+
+args = parser.parse_args()
+
+try:
+  boto3.setup_default_session(profile_name=args.profile)
+except:
+  print("Profile " + args.profile + " not found, check aws cli configuration")
+  exit()
+
+
+def main():
+    
+    regions = []
+    command = "aws eks update-kubeconfig --region {} --name {}"
+    
+    if args.region:
+        regions = [args.region]
+
+    else:
+        # List all regions available
+        client = boto3.client('ec2')
+        regions = [region['RegionName'] for region in client.describe_regions()['Regions']]
+
+    commands = []
+
+
+    for region in regions:
+        
+        if args.verbose:
+            print("Searching " + region)
+    
+        clusters, marker = list_clusters(aws_region=region)
+    
+        if not clusters:
+            if args.verbose:
+                print('No clusters exist.')
+        else:
+            while True:
+                # Print cluster names
+                for cluster in clusters:
+                    if args.profile:
+                        commands.append(command.format(region,cluster) + " --profile " + args.profile)
+                    else:
+                        commands.append(command.format(region,cluster))
+
+                # If no more clusters exist, exit loop, otherwise retrieve the next batch
+                if marker is None:
+                    break
+                clusters, marker = list_clusters(iter_marker=marker, aws_region=region)
+
+        # c = list_clusters("eu-west-1")
+
+
+    questions = [
+        inquirer.List(
+            "command",
+            message="Command: ",
+            choices=commands,
+        ),
+    ]
+
+    cmd = inquirer.prompt(questions)['command']
+    os.system(cmd)
+
+
+
+def list_clusters(max_clusters=10, iter_marker='', aws_region='eu-west-1'):
+
+    eks = boto3.client('eks', region_name=aws_region)
+
+    clusters = eks.list_clusters(maxResults=max_clusters, nextToken=iter_marker)
+    marker = clusters.get('nextToken')
+    return clusters['clusters'], marker
+
+
+if __name__ == '__main__': main()
+
