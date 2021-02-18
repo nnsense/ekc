@@ -9,6 +9,7 @@ import inquirer
 parser = argparse.ArgumentParser()
 parser.add_argument("-r", "--region", help="If a single region is provided, only clusters in that region will be searched")
 parser.add_argument("-p", "--profile", help="Use this profile to search for clusters")
+parser.add_argument("-l", "--list", help="Just list found EKS clusters and exit", action="store_true", default=False)
 parser.add_argument("-v", "--verbose", help="Verbose output", action="store_true", default=False)
 
 args = parser.parse_args()
@@ -50,29 +51,44 @@ def main():
             while True:
                 # Print cluster names
                 for cluster in clusters:
-                    if args.profile:
-                        commands.append(command.format(region,cluster) + " --profile " + args.profile)
+                    if args.list:
+                        commands.append([region,cluster])
                     else:
-                        commands.append(command.format(region,cluster))
+                        if args.profile:
+                            commands.append(command.format(region,cluster) + " --profile " + args.profile)
+                        else:
+                            commands.append(command.format(region,cluster))
 
                 # If no more clusters exist, exit loop, otherwise retrieve the next batch
                 if marker is None:
                     break
                 clusters, marker = list_clusters(iter_marker=marker, aws_region=region)
 
-        # c = list_clusters("eu-west-1")
+    
+    if commands:
+        if args.list:
+            for region_cluster in commands:
+                print("Found '" + region_cluster[1] + "' in " + region_cluster[0])
+            exit()
+            
+        else:
+            commands.append("Exit")
+            questions = [ inquirer.List( "command", message="Command: ", choices=commands, ), ]
 
-
-    questions = [
-        inquirer.List(
-            "command",
-            message="Command: ",
-            choices=commands,
-        ),
-    ]
-
-    cmd = inquirer.prompt(questions)['command']
-    os.system(cmd)
+        try:
+            cmd = inquirer.prompt(questions)['command']
+            
+            if cmd != "Exit":
+                os.system(cmd)
+            else:
+                print("No command run")
+                
+        except:
+            print("No command run")
+        
+        
+    else:
+        print("No cluster found")
 
 
 
