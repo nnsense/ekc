@@ -5,11 +5,16 @@ import os
 import boto3
 import argparse
 import inquirer
+import json
+from datetime import datetime
+from prettytable import PrettyTable # pip3.6 install prettytable
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-r", "--region", help="If a single region is provided, only clusters in that region will be searched")
 parser.add_argument("-p", "--profile", help="Use this profile to search for clusters")
 parser.add_argument("-l", "--list", help="Just list found EKS clusters and exit", action="store_true", default=False)
+parser.add_argument("-t", "--tag", help="Fetch cluster's tags, this argument accepts tag key, ie: -t CreatedBy, works with `--list`")
+parser.add_argument("-d", "--details", help="Shows cluster's details, works with `--list`", action="store_true", default=False)
 parser.add_argument("-v", "--verbose", help="Verbose output", action="store_true", default=False)
 
 args = parser.parse_args()
@@ -35,7 +40,7 @@ def main():
         regions = [region['RegionName'] for region in client.describe_regions()['Regions']]
 
     commands = []
-
+    details = []
 
     for region in regions:
         
@@ -46,16 +51,31 @@ def main():
     
         if not clusters:
             if args.verbose:
-                print('No clusters exist.')
+                print('No clusters found')
         else:
             while True:
-                # Print cluster names
                 for cluster in clusters:
                     if args.list:
-                        commands.append([region,cluster])
+                        det = cluster_details(cluster, region)
+                        createdAd = det['createdAt'].strftime("%Y-%m-%d, %H:%M:%S")
+                        version = det['version']
+                        
+                        if args.tag:
+                            arrHeaders = ["Name", "Region", "CreationDate", "K8S Version", args.tag]
+                            try:
+                                tag = cluster_details(cluster, region)['tags'][args.tag]
+                            except:
+                                tag = "NotFound"
+                        
+                            details.append([cluster, region, createdAd, version, tag])
+                        else:
+                            arrHeaders = ["Name", "Region", "CreationDate", "K8S Version"]
+                            details.append([cluster, region, createdAd, version])
+
+
                     else:
                         if args.profile:
-                            commands.append(command.format(region,cluster) + " --profile " + args.profile)
+                            commands.append(command.format(region,cluster) + " --profile " + args.profile + " --role-arn ")
                         else:
                             commands.append(command.format(region,cluster))
 
@@ -64,16 +84,19 @@ def main():
                     break
                 clusters, marker = list_clusters(iter_marker=marker, aws_region=region)
 
-    
-    if commands:
-        if args.list:
-            for region_cluster in commands:
-                print("Found '" + region_cluster[1] + "' in " + region_cluster[0])
-            exit()
-            
-        else:
-            commands.append("Exit")
-            questions = [ inquirer.List( "command", message="Command: ", choices=commands, ), ]
+
+    if details:
+        pt = PrettyTable(arrHeaders)
+        pt.align = "l"
+
+        for cluster in details:
+            pt.add_row(cluster)
+        
+        print(pt.get_string(sortby="Name"))
+
+    elif commands:
+        commands.append("Exit")
+        questions = [ inquirer.List( "command", message="Command: ", choices=commands, ), ]
 
         try:
             cmd = inquirer.prompt(questions)['command']
@@ -81,10 +104,10 @@ def main():
             if cmd != "Exit":
                 os.system(cmd)
             else:
-                print("No command run")
+                print("Command not executed")
                 
         except:
-            print("No command run")
+            print("Command not executed")
         
         
     else:
@@ -99,6 +122,16 @@ def list_clusters(max_clusters=10, iter_marker='', aws_region='eu-west-1'):
     clusters = eks.list_clusters(maxResults=max_clusters, nextToken=iter_marker)
     marker = clusters.get('nextToken')
     return clusters['clusters'], marker
+
+def cluster_details(cluster_name, aws_region):
+    eks = boto3.client('eks', region_name=aws_region)
+    
+    try:
+        response = eks.describe_cluster(name=cluster_name)
+    except Exception as e:
+        # e.response['Error']['Code'] == 'ResourceNotFoundException'
+        return None
+    return response['cluster']
 
 
 if __name__ == '__main__': main()
