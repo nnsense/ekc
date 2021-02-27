@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("-r", "--region", help="If a single region is provided, only clusters in that region will be searched")
 parser.add_argument("-p", "--profile", help="Use this profile to search for clusters")
 parser.add_argument("-l", "--list", help="Just list found EKS clusters and exit", action="store_true", default=False)
-parser.add_argument("-t", "--tag", help="Fetch cluster's tags, this argument accepts tag key, ie: -t CreatedBy, works with `--list`")
+parser.add_argument("-t", "--tag", help="Fetch additional cluster's tags to add to --list by tag key, ie: -t CreatedBy")
 parser.add_argument("-d", "--details", help="Shows cluster's details, works with `--list`", action="store_true", default=False)
 parser.add_argument("-v", "--verbose", help="Verbose output", action="store_true", default=False)
 
@@ -39,6 +39,7 @@ def main():
         client = boto3.client('ec2')
         regions = [region['RegionName'] for region in client.describe_regions()['Regions']]
 
+    arrHeaders = ["Name", "Region", "CreationDate", "K8S Version"]
     commands = []
     details = []
 
@@ -61,21 +62,22 @@ def main():
                         version = det['version']
                         
                         if args.tag:
-                            arrHeaders = ["Name", "Region", "CreationDate", "K8S Version", args.tag]
+                            if args.tag not in arrHeaders:
+                                arrHeaders.append(args.tag)
+
                             try:
                                 tag = cluster_details(cluster, region)['tags'][args.tag]
                             except:
                                 tag = "NotFound"
                         
                             details.append([cluster, region, createdAd, version, tag])
-                        else:
-                            arrHeaders = ["Name", "Region", "CreationDate", "K8S Version"]
-                            details.append([cluster, region, createdAd, version])
 
+                        else:
+                            details.append([cluster, region, createdAd, version])
 
                     else:
                         if args.profile:
-                            commands.append(command.format(region,cluster) + " --profile " + args.profile + " --role-arn ")
+                            commands.append(command.format(region,cluster) + " --profile " + args.profile)
                         else:
                             commands.append(command.format(region,cluster))
 
