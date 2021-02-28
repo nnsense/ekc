@@ -14,6 +14,7 @@ parser.add_argument("-r", "--region", help="If a single region is provided, only
 parser.add_argument("-p", "--profile", help="Use this profile to search for clusters")
 parser.add_argument("-l", "--list", help="Just list found EKS clusters and exit", action="store_true", default=False)
 parser.add_argument("-t", "--tag", help="Fetch additional cluster's tags to add to --list by tag key, ie: -t CreatedBy")
+parser.add_argument("--role-arn", help="Append the --role-arn argument to the commands")
 parser.add_argument("-d", "--details", help="Shows cluster's details, works with `--list`", action="store_true", default=False)
 parser.add_argument("-v", "--verbose", help="Verbose output", action="store_true", default=False)
 
@@ -29,7 +30,11 @@ except:
 def main():
     
     regions = []
-    command = "aws eks update-kubeconfig --region {} --name {}"
+
+    if args.role_arn:
+        command = "aws eks update-kubeconfig --region {} --name {} --role-arn " + args.role_arn
+    else:
+        command = "aws eks update-kubeconfig --region {} --name {}"
     
     if args.region:
         regions = [args.region]
