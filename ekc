@@ -20,11 +20,12 @@ parser.add_argument("-v", "--verbose", help="Verbose output", action="store_true
 
 args = parser.parse_args()
 
-try:
-  boto3.setup_default_session(profile_name=args.profile)
-except:
-  print("Profile " + args.profile + " not found, check aws cli configuration")
-  exit()
+if args.profile:
+    try:
+      boto3.setup_default_session(profile_name=args.profile)
+    except:
+      print("Profile " + args.profile + " not found, check aws cli configuration")
+      exit()
 
 
 def main():
@@ -63,7 +64,7 @@ def main():
                 for cluster in clusters:
                     if args.list:
                         det = cluster_details(cluster, region)
-                        createdAd = det['createdAt'].strftime("%Y-%m-%d, %H:%M:%S")
+                        createdAt = det['createdAt'].strftime("%Y-%m-%d, %H:%M:%S")
                         version = det['version']
                         
                         if args.tag:
@@ -75,10 +76,10 @@ def main():
                             except:
                                 tag = "NotFound"
                         
-                            details.append([cluster, region, createdAd, version, tag])
+                            details.append([cluster, region, createdAt, version, tag])
 
                         else:
-                            details.append([cluster, region, createdAd, version])
+                            details.append([cluster, region, createdAt, version])
 
                     else:
                         if args.profile:

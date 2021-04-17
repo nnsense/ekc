@@ -49,4 +49,16 @@ Run `ekc -r eu-west-1 -lt MyTag` to get the same details as above along the clus
 +----------------------------------+-----------+----------------------+-------------+-------------------+
 ```
 
-That's all ;)
+# ekc-cleanup
+
+This is pretty close to the ekc tool, but it search for a string into each kuberentes deployment and reports back a list of the clusters found along the presence of the string among the pods.
+Its purpose is to keep the deployments under control, to see how many have a specific deployment in place (say you have multiple clusters but some have left without anything running and you want to know what can be deleted.
+
+It has the same `-r` switch for the region to search and `-p` to use a different aws profile as the ekc script, and it requires `-s` for the string to search into the output of a `kubectl get pods` command. The output is to stdout by default, or to a file by setting `--file somefile.log`.
+
+Example:
+```
+> ekc-cleanup -s myapp
+eu-west-1/first-cluster (Created by Godzilla on 2021-04-16, 15:31:35) - myapp found
+us-east-1/second-cluster (Created by Pluto on 2021-04-16, 13:06:09) - myapp pound
+```
