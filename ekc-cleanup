@@ -116,8 +116,7 @@ def main():
 
 
     if args.file:
-        scriptPath = (os.path.dirname(os.path.realpath(__file__)))
-        with open(scriptPath + "/" + args.file, 'w') as logfile:
+        with open(args.file, 'w') as logfile:
             logfile.write(output)
     else:
         print(output)
