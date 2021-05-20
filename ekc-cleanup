@@ -8,6 +8,7 @@ import subprocess
 from datetime import datetime
 from pprint import pprint
 
+
 parser = argparse.ArgumentParser()
 parser.add_argument("-r", "--region", help="If a single region is provided, only clusters in that region will be searched")
 parser.add_argument("-p", "--profile", help="Use this profile to search for clusters")
@@ -18,29 +19,25 @@ parser.add_argument("-f", "--file", help="Write the output to a file instead of 
 
 args = parser.parse_args()
 
-if args.profile:
-    try:
-      boto3.setup_default_session(profile_name=args.profile)
-    except:
-      print("Profile " + args.profile + " not found, check aws cli configuration")
-      exit()
-
-if args.file:
-    if args.file == "":
-        print("--file argument requires a filename")
-
 def main():
 
     regions = []
 
     if args.role_arn:
-        command = "aws eks update-kubeconfig --region {} --name {} --role-arn " + args.role_arn
+        command = "aws eks update-kubeconfig --region {} --name {} --kubeconfig /tmp/.ekc_config --role-arn " + args.role_arn
     else:
-        command = "aws eks update-kubeconfig --region {} --name {}"
-    
+        command = "aws eks update-kubeconfig --region {} --name {} --kubeconfig /tmp/.ekc_config"
+
+    if args.profile:
+        try:
+          boto3.setup_default_session(profile_name=args.profile)
+        except:
+          avail_profiles = boto3.session.Session().available_profiles
+          print("Profile '" + args.profile + "' not found, available profiles: " + ", ".join(avail_profiles))
+          exit()
+
     if args.region:
         regions = [args.region]
-
     else:
         # List all regions available
         client = boto3.client('ec2')
@@ -49,8 +46,11 @@ def main():
     found_clusters = []
 
     for region in regions:
-        clusters, marker = list_clusters(aws_region=region)
-    
+        try:
+            clusters, marker = list_clusters(aws_region=region)
+        except:
+            clusters = []
+
         if clusters:
             while True:
                 for cluster in clusters:
@@ -61,13 +61,14 @@ def main():
                     break
                 clusters, marker = list_clusters(iter_marker=marker, aws_region=region)
 
-        # else:
-            # print(region + ' - No clusters found')
 
     output = ""
 
     if found_clusters:
         for cluster_region in found_clusters:
+            
+            if args.verbose: print(cluster_region)
+            
             cluster = cluster_region[0]
             region = cluster_region[1]
 
@@ -76,20 +77,20 @@ def main():
             else:
                 c = command.format(region,cluster)
                 
-            if args.verbose:
-                print(c)
-                
-            kubectl = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).wait()
-            get_pods = subprocess.Popen("kubectl get pods", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if args.verbose: print(c)
+            
+            kubectl = subprocess.Popen(c, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).wait()
+            get_pods = subprocess.Popen("kubectl --kubeconfig /tmp/.ekc_config get pods", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             
             match = False
             for line in io.TextIOWrapper(get_pods.stdout, encoding="utf-8"):
                 re_match = re.search(r'.*' + args.search + '.*', line)
                 if re_match:
                     match = True
+                    print(args.search + " found in " + region + "/" + cluster)
                     break
 
-            if match == True:
+            if match:
                 det = cluster_details(cluster, region)
                 createdAt = det['createdAt'].strftime("%Y-%m-%d, %H:%M:%S")
                 version = det['version']
@@ -116,16 +117,20 @@ def main():
 
 
     if args.file:
-        with open(args.file, 'w') as logfile:
-            logfile.write(output)
+        try:
+            with open(args.file, 'w') as logfile:
+                logfile.write(output)
+        except Exception as e:
+            print(str(e))
+
     else:
         print(output)
+    
+    if os.path.isfile("/tmp/.ekc_config"): os.remove("/tmp/.ekc_config")
 
 
-def list_clusters(max_clusters=10, iter_marker='', aws_region='eu-west-1'):
-
+def list_clusters(max_clusters=50, iter_marker='', aws_region='eu-west-1'):
     eks = boto3.client('eks', region_name=aws_region)
-
     clusters = eks.list_clusters(maxResults=max_clusters, nextToken=iter_marker)
     marker = clusters.get('nextToken')
     return clusters['clusters'], marker
