@@ -19,13 +19,6 @@ parser.add_argument("-v", "--verbose", help="Verbose output", action="store_true
 
 args = parser.parse_args()
 
-if args.profile:
-    try:
-      boto3.setup_default_session(profile_name=args.profile)
-    except:
-      print("Profile " + args.profile + " not found, check aws cli configuration")
-      exit()
-
 
 def main():
     
@@ -35,7 +28,15 @@ def main():
         command = "aws eks update-kubeconfig --region {} --name {} --role-arn " + args.role_arn
     else:
         command = "aws eks update-kubeconfig --region {} --name {}"
-    
+
+    if args.profile:
+        try:
+          boto3.setup_default_session(profile_name=args.profile)
+        except:
+          avail_profiles = boto3.session.Session().available_profiles
+          print("Profile '" + args.profile + "' not found, available profiles: " + ", ".join(avail_profiles))
+          exit()
+
     if args.region:
         regions = [args.region]
 
@@ -43,6 +44,7 @@ def main():
         # List all regions available
         client = boto3.client('ec2')
         regions = [region['RegionName'] for region in client.describe_regions()['Regions']]
+        # regions = ['af-south-1', 'eu-south-1', 'me-south-1', 'ap-east-1' ]
 
     arrHeaders = ["Name", "Region", "CreationDate", "K8S Version"]
     commands = []
@@ -53,11 +55,15 @@ def main():
         if args.verbose:
             print("Searching " + region)
     
-        clusters, marker = list_clusters(aws_region=region)
+        try:
+            clusters, marker = list_clusters(aws_region=region)
+        except:
+            clusters = []
     
         if not clusters:
             if args.verbose:
                 print('No clusters found')
+
         else:
             while True:
                 for cluster in clusters:
@@ -124,8 +130,11 @@ def main():
 
 def list_clusters(max_clusters=10, iter_marker='', aws_region='eu-west-1'):
 
-    eks = boto3.client('eks', region_name=aws_region)
-
+    try:
+        eks = boto3.client('eks', region_name=aws_region)
+    except Exception as e:
+        print(e)
+        
     clusters = eks.list_clusters(maxResults=max_clusters, nextToken=iter_marker)
     marker = clusters.get('nextToken')
     return clusters['clusters'], marker
