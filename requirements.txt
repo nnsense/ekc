@@ -1,5 +1,5 @@
-blessed==1.18.0
-boto3==1.17.101
-botocore==1.20.101
+blessed==1.17.6
+boto3==1.17.76
+botocore==1.20.76
 inquirer==2.7.0
-prettytable==2.1.0
+prettytable==2.0.0
