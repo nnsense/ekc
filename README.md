@@ -14,6 +14,7 @@ It requires `aws cli` to be configured and working.
 `-l` or `--list` to list details about the cluster(s) (instead of running the kube update command)
 `-t` or `--tag` can optionally be used to add one tag to the details you get from `--list`
 `--role-arn` is required when using `--profile` to create the kubectl command line including the `--role-arn` bit
+`--kubeconfig` allows to set a custom kube config file, by default the tool configures the user's `~/.kube/config`
 
 
 ## Example

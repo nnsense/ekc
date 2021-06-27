@@ -7,6 +7,7 @@ import argparse
 import inquirer
 import threading
 import queue
+from botocore.config import Config
 from prettytable import PrettyTable
 
 
@@ -16,9 +17,12 @@ parser.add_argument("-p", "--profile", help="Use this profile to search for clus
 parser.add_argument("-l", "--list", help="Just list found EKS clusters and exit", action="store_true", default=False)
 parser.add_argument("-t", "--tag", help="Fetch additional cluster's tags to add to --list by tag key, ie: -t CreatedBy")
 parser.add_argument("--role-arn", help="Append the --role-arn argument to the commands")
+parser.add_argument("--kubeconfig", help="Configure the specified file instead of the user's kubeconfig")
 parser.add_argument("-v", "--verbose", help="Verbose output", action="store_true", default=False)
 
 args = parser.parse_args()
+
+boto_config = Config(connect_timeout=5, read_timeout=5, retries={'max_attempts': 1})
 
 
 def main():
@@ -37,8 +41,8 @@ def main():
         regions = [args.region]
     else:
         # List all regions available - a region is set just in case the aws cli has no default
-        client = boto3.client('ec2', 'eu-west-1')
-        regions = [region['RegionName'] for region in client.describe_regions()['Regions']]
+        client_ec2 = boto3.client('ec2', 'eu-west-1', config=boto_config)
+        regions = [region['RegionName'] for region in client_ec2.describe_regions()['Regions']]
         # regions = ['af-south-1', 'eu-south-1', 'me-south-1', 'ap-east-1' ]
 
     arrHeaders = ["Name", "Region", "CreationDate", "K8S Version"]
@@ -104,7 +108,7 @@ def main():
 # https://github.com/awsdocs/aws-doc-sdk-examples/blob/master/python/example_code/eks/list_clusters.py
 def list_clusters(max_clusters=10, iter_marker='', aws_region='eu-west-1'):
     try:
-        eks = boto3.client('eks', region_name=aws_region)
+        eks = boto3.client('eks', region_name=aws_region, config=boto_config)
     except Exception as e:
         print(e)
 
@@ -114,7 +118,7 @@ def list_clusters(max_clusters=10, iter_marker='', aws_region='eu-west-1'):
 
 
 def cluster_details(cluster_name, aws_region):
-    eks = boto3.client('eks', region_name=aws_region)
+    eks = boto3.client('eks', region_name=aws_region, config=boto_config)
 
     try:
         response = eks.describe_cluster(name=cluster_name)
@@ -144,7 +148,6 @@ def cluster_details_t(region, q):
                     version = det['version']
 
                     if args.tag:
-
                         try:
                             tag = cluster_details(cluster, region)['tags'][args.tag]
                         except Exception as e:
@@ -152,22 +155,27 @@ def cluster_details_t(region, q):
                             print(str(e))
 
                         details = [cluster, region, createdAt, version, tag]
-                        q.put(details)
-
                     else:
                         details = [cluster, region, createdAt, version]
-                        q.put(details)
+
+                    q.put(details)
 
                 else:
-                    if args.role_arn:
-                        command = "aws eks update-kubeconfig --region {} --name {} --role-arn " + args.role_arn
+                    if args.kubeconfig:
+                        base_command = ["aws", "eks", "update-kubeconfig",
+                                        "--kubeconfig " + args.kubeconfig, "--region {}", "--name {}"]
                     else:
-                        command = "aws eks update-kubeconfig --region {} --name {}"
+                        base_command = ["aws", "eks", "update-kubeconfig", "--region {}", "--name {}"]
+
+                    if args.role_arn:
+                        base_command.append("--role-arn " + args.role_arn)
 
                     if args.profile:
-                        q.put(command.format(region, cluster) + " --profile " + args.profile)
-                    else:
-                        q.put(command.format(region, cluster))
+                        base_command.append("--profile " + args.profile)
+
+                    command = ' '.join(base_command).format(region, cluster)
+
+                    q.put(command)
 
             # If no more clusters exist, exit loop, retrieve the next batch otherwise
             if marker is None:
