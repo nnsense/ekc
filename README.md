@@ -1,18 +1,20 @@
 ## ekc: what is
 
-This is a very small script that scans all the AWS regions into the current account or another one (using `-p`) for EKS clusters and creates the right command line to configure `~/.kube/config`.
-
-It can also list (`-l` or `--list`) the clusters it founds with more details.
+This is a small tool to scan all the current account's AWS regions (or another account using `--profile` or `-p`) for running EKS clusters, and it configure  `~/.kube/config` by running `eks configure`. It can also list (`-l` or `--list`) the clusters it founds. If a specific tag has been used to add details, it can be added by using `-t`, ie `-lt CreatedBy`.
 
 It requires `aws cli` to be configured and working.
 
 
 ## Arguments
 
-`-r` or `--region` if you want to spped up the scan targeting only one region
+`-r` or `--region` to target only one region instead of search all
+
 `-p` or `--profile` to use a different `aws cli` profile.
+
 `-l` or `--list` to list details about the cluster(s) (instead of running the kube update command)
+
 `-t` or `--tag` can optionally be used to add one tag to the details you get from `--list`
+
 `--role-arn` is required when using `--profile` to create the kubectl command line including the `--role-arn` bit
 `--kubeconfig` allows to set a custom kube config file, by default the tool configures the user's `~/.kube/config`
 
@@ -56,8 +58,8 @@ Run `ekc -r eu-west-1 -lt MyTag` to get the same details as above along the clus
 
 # ekc-cleanup
 
-This is pretty close to the ekc tool, but it search for a string into each kuberentes deployment and reports back a list of the clusters found along the presence of the string among the pods.
-Its purpose is to keep the deployments under control, to see how many have a specific deployment in place (say you have multiple clusters but some have left without anything running and you want to know what can be deleted.
+This is pretty close to the ekc tool, but it searches for a string into each Kubernetes deployment and reports back a list of the clusters found along the presence of the string among the pods.
+Its purpose is to keep the deployments under control, to check how many running clusters actually have a working deployment, and aren't there only to waste money on AWS.
 
 It has the same `-r` switch for the region to search and `-p` to use a different aws profile as the ekc script, and it requires `-s` for the string to search into the output of a `kubectl get pods` command. The output is to stdout by default, or to a file by setting `--file somefile.log`.
 
