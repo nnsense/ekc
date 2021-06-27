@@ -10,9 +10,13 @@ It requires `aws cli` to be configured and working.
 ## Arguments
 
 `-r` or `--region` if you want to spped up the scan targeting only one region
+
 `-p` or `--profile` to use a different `aws cli` profile.
+
 `-l` or `--list` to list details about the cluster(s) (instead of running the kube update command)
+
 `-t` or `--tag` can optionally be used to add one tag to the details you get from `--list`
+
 `--role-arn` is required when using `--profile` to create the kubectl command line including the `--role-arn` bit
 
 
