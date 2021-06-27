@@ -1,4 +1,4 @@
-# ekc: what is
+## ekc: what is
 
 This is a very small script that scans all the AWS regions into the current account or another one (using `-p`) for EKS clusters and creates the right command line to configure `~/.kube/config`.
 
@@ -6,12 +6,15 @@ It can also list (`-l` or `--list`) the clusters it founds with more details.
 
 It requires `aws cli` to be configured and working.
 
+
 ## Arguments
 
 `-r` or `--region` if you want to spped up the scan targeting only one region
 `-p` or `--profile` to use a different `aws cli` profile.
 `-l` or `--list` to list details about the cluster(s) (instead of running the kube update command)
 `-t` or `--tag` can optionally be used to add one tag to the details you get from `--list`
+`--role-arn` is required when using `--profile` to create the kubectl command line including the `--role-arn` bit
+
 
 ## Example
 
@@ -48,6 +51,7 @@ Run `ekc -r eu-west-1 -lt MyTag` to get the same details as above along the clus
 | dev-mycluster-128141-cluster     | eu-west-1 | 2021-02-23, 14:24:47 | 1.19        | False             |
 +----------------------------------+-----------+----------------------+-------------+-------------------+
 ```
+
 
 # ekc-cleanup
 

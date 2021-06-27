@@ -5,9 +5,10 @@ import os
 import boto3
 import argparse
 import inquirer
-import json
-from datetime import datetime
-from prettytable import PrettyTable # pip3.6 install prettytable
+import threading
+import queue
+from prettytable import PrettyTable
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-r", "--region", help="If a single region is provided, only clusters in that region will be searched")
@@ -21,134 +22,158 @@ args = parser.parse_args()
 
 
 def main():
-    
-    regions = []
 
-    if args.role_arn:
-        command = "aws eks update-kubeconfig --region {} --name {} --role-arn " + args.role_arn
-    else:
-        command = "aws eks update-kubeconfig --region {} --name {}"
+    regions = []
 
     if args.profile:
         try:
-          boto3.setup_default_session(profile_name=args.profile)
+            boto3.setup_default_session(profile_name=args.profile)
         except:
-          avail_profiles = boto3.session.Session().available_profiles
-          print("Profile '" + args.profile + "' not found, available profiles: " + ", ".join(avail_profiles))
-          exit()
+            avail_profiles = boto3.session.Session().available_profiles
+            print("Profile '" + args.profile + "' not found, available profiles: " + ", ".join(avail_profiles))
+            exit()
 
     if args.region:
         regions = [args.region]
-
     else:
-        # List all regions available
-        client = boto3.client('ec2')
+        # List all regions available - a region is set just in case the aws cli has no default
+        client = boto3.client('ec2', 'eu-west-1')
         regions = [region['RegionName'] for region in client.describe_regions()['Regions']]
         # regions = ['af-south-1', 'eu-south-1', 'me-south-1', 'ap-east-1' ]
 
     arrHeaders = ["Name", "Region", "CreationDate", "K8S Version"]
-    commands = []
-    details = []
+    threads = []
+    queues = []
 
     for region in regions:
-        
+
         if args.verbose:
             print("Searching " + region)
-    
-        try:
-            clusters, marker = list_clusters(aws_region=region)
-        except:
-            clusters = []
-    
-        if not clusters:
-            if args.verbose:
-                print('No clusters found')
 
-        else:
-            while True:
-                for cluster in clusters:
-                    if args.list:
-                        det = cluster_details(cluster, region)
-                        createdAt = det['createdAt'].strftime("%Y-%m-%d, %H:%M:%S")
-                        version = det['version']
-                        
-                        if args.tag:
-                            if args.tag not in arrHeaders:
-                                arrHeaders.append(args.tag)
+        q = queue.Queue()
 
-                            try:
-                                tag = cluster_details(cluster, region)['tags'][args.tag]
-                            except:
-                                tag = "NotFound"
-                        
-                            details.append([cluster, region, createdAt, version, tag])
+        t = threading.Thread(target=cluster_details_t, args=(region, q,), name='details_' + region)
+        t.start()
+        threads.append(t)
+        queues.append(q)
 
-                        else:
-                            details.append([cluster, region, createdAt, version])
+    for t in threads:
+        t.join(10)
 
-                    else:
-                        if args.profile:
-                            commands.append(command.format(region,cluster) + " --profile " + args.profile)
-                        else:
-                            commands.append(command.format(region,cluster))
+    details = []
+    commands = []
 
-                # If no more clusters exist, exit loop, otherwise retrieve the next batch
-                if marker is None:
-                    break
-                clusters, marker = list_clusters(iter_marker=marker, aws_region=region)
-
+    for q in queues:
+        if q.qsize() > 0:
+            if args.list:
+                details.append(q.get())
+            else:
+                commands.append(q.get())
 
     if details:
+        if args.tag and args.tag not in arrHeaders:
+            arrHeaders.append(args.tag)
+
         pt = PrettyTable(arrHeaders)
         pt.align = "l"
 
         for cluster in details:
             pt.add_row(cluster)
-        
+
         print(pt.get_string(sortby="Name"))
 
     elif commands:
         commands.append("Exit")
-        questions = [ inquirer.List( "command", message="Command: ", choices=commands, ), ]
+        questions = [inquirer.List("command", message="Command: ", choices=commands, ), ]
 
         try:
             cmd = inquirer.prompt(questions)['command']
-            
+
             if cmd != "Exit":
                 os.system(cmd)
             else:
                 print("Command not executed")
-                
+
         except:
             print("Command not executed")
-        
-        
+
     else:
         print("No cluster found")
 
 
-
+# https://github.com/awsdocs/aws-doc-sdk-examples/blob/master/python/example_code/eks/list_clusters.py
 def list_clusters(max_clusters=10, iter_marker='', aws_region='eu-west-1'):
-
     try:
         eks = boto3.client('eks', region_name=aws_region)
     except Exception as e:
         print(e)
-        
+
     clusters = eks.list_clusters(maxResults=max_clusters, nextToken=iter_marker)
     marker = clusters.get('nextToken')
     return clusters['clusters'], marker
 
+
 def cluster_details(cluster_name, aws_region):
     eks = boto3.client('eks', region_name=aws_region)
-    
+
     try:
         response = eks.describe_cluster(name=cluster_name)
-    except Exception as e:
-        # e.response['Error']['Code'] == 'ResourceNotFoundException'
+    except:
         return None
     return response['cluster']
 
 
-if __name__ == '__main__': main()
+def cluster_details_t(region, q):
 
+    try:
+        clusters, marker = list_clusters(aws_region=region)
+    except:
+        clusters, marker = [], None
+
+    if not clusters:
+        if args.verbose:
+            print(region + ': No clusters found')
+
+    else:
+        while True:
+            for cluster in clusters:
+                if args.list:
+
+                    det = cluster_details(cluster, region)
+                    createdAt = det['createdAt'].strftime("%Y-%m-%d, %H:%M:%S")
+                    version = det['version']
+
+                    if args.tag:
+
+                        try:
+                            tag = cluster_details(cluster, region)['tags'][args.tag]
+                        except Exception as e:
+                            tag = "NotFound"
+                            print(str(e))
+
+                        details = [cluster, region, createdAt, version, tag]
+                        q.put(details)
+
+                    else:
+                        details = [cluster, region, createdAt, version]
+                        q.put(details)
+
+                else:
+                    if args.role_arn:
+                        command = "aws eks update-kubeconfig --region {} --name {} --role-arn " + args.role_arn
+                    else:
+                        command = "aws eks update-kubeconfig --region {} --name {}"
+
+                    if args.profile:
+                        q.put(command.format(region, cluster) + " --profile " + args.profile)
+                    else:
+                        q.put(command.format(region, cluster))
+
+            # If no more clusters exist, exit loop, retrieve the next batch otherwise
+            if marker is None:
+                break
+            clusters, marker = list_clusters(iter_marker=marker, aws_region=region)
+
+
+if __name__ == '__main__':
+    main()
