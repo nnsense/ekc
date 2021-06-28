@@ -15,7 +15,10 @@ It requires `aws cli` to be configured and working.
 
 `-t` or `--tag` can optionally be used to add one tag to the details you get from `--list`
 
+`-s` or `--search` returns the same output as `-l` but allows to search for a string across pods' names on k8s by adding another column with the string showing where it has been found.
+
 `--role-arn` is required when using `--profile` to create the kubectl command line including the `--role-arn` bit
+
 `--kubeconfig` allows to set a custom kube config file, by default the tool configures the user's `~/.kube/config`
 
 

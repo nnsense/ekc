@@ -2,11 +2,14 @@
 # -*- coding: utf-8 -*-
 
 import os
+import io
+import re
 import boto3
 import argparse
 import inquirer
 import threading
 import queue
+import subprocess
 from botocore.config import Config
 from prettytable import PrettyTable
 
@@ -19,6 +22,7 @@ parser.add_argument("-t", "--tag", help="Fetch additional cluster's tags to add 
 parser.add_argument("--role-arn", help="Append the --role-arn argument to the commands")
 parser.add_argument("--kubeconfig", help="Configure the specified file instead of the user's kubeconfig")
 parser.add_argument("-v", "--verbose", help="Verbose output", action="store_true", default=False)
+parser.add_argument("-s", "--search", help="Verbose output")
 
 args = parser.parse_args()
 
@@ -45,7 +49,6 @@ def main():
         regions = [region['RegionName'] for region in client_ec2.describe_regions()['Regions']]
         # regions = ['af-south-1', 'eu-south-1', 'me-south-1', 'ap-east-1' ]
 
-    arrHeaders = ["Name", "Region", "CreationDate", "K8S Version"]
     threads = []
     queues = []
 
@@ -64,45 +67,79 @@ def main():
     for t in threads:
         t.join(10)
 
-    details = []
-    commands = []
+    cluster_attr = []
 
     for q in queues:
         if q.qsize() > 0:
-            if args.list:
-                details.append(q.get())
-            else:
-                commands.append(q.get())
+            cluster_attr.append(q.get())
 
-    if details:
-        if args.tag and args.tag not in arrHeaders:
+    if not cluster_attr:
+        print("No clusters found")
+        exit()
+
+    if args.list or args.search:
+        arrHeaders = ["Name", "Region", "CreationDate", "K8S Version"]
+
+        if args.tag:
             arrHeaders.append(args.tag)
+        if args.search:
+            arrHeaders.append(args.search)
 
         pt = PrettyTable(arrHeaders)
         pt.align = "l"
 
-        for cluster in details:
-            pt.add_row(cluster)
+        for attr in cluster_attr:
+            base_values = [attr['cluster'], attr['region'], attr['createdAt'], attr['version']]
+
+            if args.tag:
+                base_values.append(attr[args.tag])
+
+            if args.search:
+                cmd = "aws eks update-kubeconfig --region {} --name {}".format(attr['region'], attr['cluster'])
+                found = pod_search(cmd, args.search)
+                base_values.append(found)
+
+            pt.add_row(base_values)
 
         print(pt.get_string(sortby="Name"))
 
-    elif commands:
-        commands.append("Exit")
-        questions = [inquirer.List("command", message="Command: ", choices=commands, ), ]
-
-        try:
-            cmd = inquirer.prompt(questions)['command']
-
-            if cmd != "Exit":
-                os.system(cmd)
-            else:
-                print("Command not executed")
-
-        except:
-            print("Command not executed")
-
     else:
-        print("No cluster found")
+
+        commands = []
+
+        for attr in cluster_attr:
+            cluster = attr['cluster']
+            region = attr['region']
+
+            if args.kubeconfig:
+                base_command = ["aws", "eks", "update-kubeconfig",
+                                "--kubeconfig " + args.kubeconfig, "--region {}", "--name {}"]
+            else:
+                base_command = ["aws", "eks", "update-kubeconfig", "--region {}", "--name {}"]
+
+            if args.role_arn:
+                base_command.append("--role-arn " + args.role_arn)
+
+            if args.profile:
+                base_command.append("--profile " + args.profile)
+
+            commands.append(' '.join(base_command).format(region, cluster))
+
+        if commands:
+            commands.append("Exit")
+
+            questions = [inquirer.List("command", message="Command: ", choices=commands, ), ]
+
+            try:
+                cmd = inquirer.prompt(questions)['command']
+
+                if cmd != "Exit":
+                    os.system(cmd)
+                else:
+                    print("Command not executed")
+
+            except:
+                print("Command not executed")
 
 
 # https://github.com/awsdocs/aws-doc-sdk-examples/blob/master/python/example_code/eks/list_clusters.py
@@ -141,46 +178,51 @@ def cluster_details_t(region, q):
     else:
         while True:
             for cluster in clusters:
-                if args.list:
+                det = cluster_details(cluster, region)
+                createdAt = det['createdAt'].strftime("%Y-%m-%d, %H:%M:%S")
+                version = det['version']
 
-                    det = cluster_details(cluster, region)
-                    createdAt = det['createdAt'].strftime("%Y-%m-%d, %H:%M:%S")
-                    version = det['version']
+                attributes = {}
 
-                    if args.tag:
-                        try:
-                            tag = cluster_details(cluster, region)['tags'][args.tag]
-                        except Exception as e:
-                            tag = "NotFound"
-                            print(str(e))
+                if args.tag:
+                    try:
+                        tag = cluster_details(cluster, region)['tags'][args.tag]
+                    except Exception as e:
+                        tag = "NotFound"
+                        print(str(e))
 
-                        details = [cluster, region, createdAt, version, tag]
-                    else:
-                        details = [cluster, region, createdAt, version]
+                    attributes[args.tag] = tag
 
-                    q.put(details)
+                attributes['cluster'] = cluster
+                attributes['region'] = region
+                attributes['createdAt'] = createdAt
+                attributes['version'] = version
 
-                else:
-                    if args.kubeconfig:
-                        base_command = ["aws", "eks", "update-kubeconfig",
-                                        "--kubeconfig " + args.kubeconfig, "--region {}", "--name {}"]
-                    else:
-                        base_command = ["aws", "eks", "update-kubeconfig", "--region {}", "--name {}"]
-
-                    if args.role_arn:
-                        base_command.append("--role-arn " + args.role_arn)
-
-                    if args.profile:
-                        base_command.append("--profile " + args.profile)
-
-                    command = ' '.join(base_command).format(region, cluster)
-
-                    q.put(command)
+                q.put(attributes)
 
             # If no more clusters exist, exit loop, retrieve the next batch otherwise
             if marker is None:
                 break
             clusters, marker = list_clusters(iter_marker=marker, aws_region=region)
+
+
+def pod_search(cmd, search_term):
+    tmp_kubeconfig = ".tmp_kubeconfig"
+    command = cmd.split()
+    command.extend(["--kubeconfig", tmp_kubeconfig])
+    subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE).wait()
+    src_command = "kubectl --kubeconfig " + tmp_kubeconfig + " get pods -A"
+    get_pods = subprocess.Popen(src_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    get_pods.wait()
+    if os.path.isfile(tmp_kubeconfig):
+        os.remove(tmp_kubeconfig)
+
+    for line in io.TextIOWrapper(get_pods.stdout, encoding="utf-8"):
+        re_match = re.search(r'.*' + search_term + '.*', line)
+        if re_match:
+            return True
+
+    return False
 
 
 if __name__ == '__main__':
