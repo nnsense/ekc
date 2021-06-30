@@ -50,28 +50,24 @@ def main():
         # regions = ['af-south-1', 'eu-south-1', 'me-south-1', 'ap-east-1' ]
 
     threads = []
-    queues = []
+    q = queue.Queue()
 
     for region in regions:
 
         if args.verbose:
             print("Searching " + region)
 
-        q = queue.Queue()
-
         t = threading.Thread(target=cluster_details_t, args=(region, q,), name='details_' + region)
         t.start()
         threads.append(t)
-        queues.append(q)
 
     for t in threads:
         t.join(10)
 
     cluster_attr = []
 
-    for q in queues:
-        if q.qsize() > 0:
-            cluster_attr.append(q.get())
+    while not q.empty():
+        cluster_attr.append(q.get())
 
     if not cluster_attr:
         print("No clusters found")
