@@ -7,7 +7,7 @@ It requires `aws cli` to be configured and working.
 
 ## Arguments
 
-`-r` or `--region` to target only one region instead of search all
+`-R` or `--region` to target only one region instead of search all
 
 `-p` or `--profile` to use a different `aws cli` profile.
 
@@ -26,9 +26,9 @@ It requires `aws cli` to be configured and working.
 
 Run `ekc` without any argument to scan all the regions of the currently `aws cli` configured account and output the right commands to update `~/.kube/config`
 
-Run `ekc -r eu-west-1` to scan the EKS clusters into the Ireland region or `ekc -r eu-west-1 -p engineering` to scan clusters in Ireland using the `aws cli` profile "engineering".
+Run `ekc -R eu-west-1` to scan the EKS clusters into the Ireland region or `ekc -R eu-west-1 -p engineering` to scan clusters in Ireland using the `aws cli` profile "engineering".
 
-Run `ekc -r eu-west-1 -l` to list the clusters along some details, eg:
+Run `ekc -R eu-west-1 -l` to list the clusters along some details, eg:
 
 ```
 +----------------------------------+-----------+----------------------+-------------+
@@ -43,7 +43,7 @@ Run `ekc -r eu-west-1 -l` to list the clusters along some details, eg:
 +----------------------------------+-----------+----------------------+-------------+
 ```
 
-Run `ekc -r eu-west-1 -lt MyTag` to get the same details as above along the cluster's tag having the `key` "MyTag", eg:
+Run `ekc -R eu-west-1 -lt MyTag` to get the same details as above along the cluster's tag having the `key` "MyTag", eg:
 
 ```
 +----------------------------------+-----------+----------------------+-------------+-------------------+
@@ -64,7 +64,7 @@ Run `ekc -r eu-west-1 -lt MyTag` to get the same details as above along the clus
 This is pretty close to the ekc tool, but it searches for a string into each Kubernetes deployment and reports back a list of the clusters found along the presence of the string among the pods.
 Its purpose is to keep the deployments under control, to check how many running clusters actually have a working deployment, and aren't there only to waste money on AWS.
 
-It has the same `-r` switch for the region to search and `-p` to use a different aws profile as the ekc script, and it requires `-s` for the string to search into the output of a `kubectl get pods` command. The output is to stdout by default, or to a file by setting `--file somefile.log`.
+It has the same `-R` switch for the region to search and `-p` to use a different aws profile as the ekc script, and it requires `-s` for the string to search into the output of a `kubectl get pods` command. The output is to stdout by default, or to a file by setting `--file somefile.log`.
 
 Example:
 ```

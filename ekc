@@ -1,9 +1,11 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
+# pylint: disable=bare-except, too-many-locals, line-too-long
 
 import os
 import io
 import re
+import sys
 import boto3
 import argparse
 import inquirer
@@ -12,80 +14,111 @@ import queue
 import subprocess
 from botocore.config import Config
 from prettytable import PrettyTable
-
+import configparser
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-r", "--region", help="If a single region is provided, only clusters in that region will be searched")
-parser.add_argument("-p", "--profile", help="Use this profile to search for clusters")
-parser.add_argument("-l", "--list", help="Just list found EKS clusters and exit", action="store_true", default=False)
-parser.add_argument("-t", "--tag", help="Fetch additional cluster's tags to add to --list by tag key, ie: -t CreatedBy")
-parser.add_argument("--role-arn", help="Append the --role-arn argument to the commands")
-parser.add_argument("--kubeconfig", help="Configure the specified file instead of the user's kubeconfig")
-parser.add_argument("-v", "--verbose", help="Verbose output", action="store_true", default=False)
-parser.add_argument("-s", "--search", help="Verbose output")
+parser.add_argument("-R", "--region", help="One or more regions to scan. If unset will scan all regions.")
+parser.add_argument("-l", "--list", help="List all EKS clusters found and exit", action="store_true", default=False)
+parser.add_argument("-t", "--tag", help="Fetch additional cluster's tags to add to --list by tag key, ie: -t CreatedBy.")
+parser.add_argument("--role-arn", help="Append the --role-arn argument to the output commands. If multiple profiles are available (so, different role names), set the config file")
+parser.add_argument("-k", "--kubeconfig", help="Configure the specified file instead of the user's default kubeconfig (~/.kube/config).")
+parser.add_argument("-p", "--profile", help="Use this profile to search for clusters. If unset will scan the 'default' profile.")
+parser.add_argument("-A", "--all", help="Search across all AWS profiles configured in aws cli config file.", action="store_true", default=False)
+parser.add_argument("-v", "--verbose", help="Verbose output (for troubleshooting).", action="store_true", default=False)
+parser.add_argument("-s", "--search", help="Search for specific pod name across clusters (useful to check if a cluster is running an application or not.)")
 
 args = parser.parse_args()
 
 boto_config = Config(connect_timeout=5, read_timeout=5, retries={'max_attempts': 1})
 
+config_parser = configparser.ConfigParser()
+home = os.path.expanduser("~")
+config_parser.read(home + '/.ekc_config')
+
+'''
+Note: to use multiple accounts with different role_arn(s), a config file is required.
+By default, this is set to be `~/.ekc_config`
+
+Example config file:
+
+[prod]
+role_arn = "arn:aws:iam::654321234567:role/eks-production-k8s-role"
+
+[dev]
+role_arn = "arn:aws:iam::876543212345:role/eks-dev-k8s-role"
+'''
 
 def main():
 
     regions = []
 
+    avail_profiles = boto3.session.Session().available_profiles
+    profiles = {}
+
     if args.profile:
         try:
-            boto3.setup_default_session(profile_name=args.profile)
+            profiles[args.profile] = boto3.session.Session(profile_name=args.profile)
         except:
-            avail_profiles = boto3.session.Session().available_profiles
             print("Profile '" + args.profile + "' not found, available profiles: " + ", ".join(avail_profiles))
-            exit()
+            sys.exit(1)
+    elif args.all:
+        for profile in avail_profiles:
+            profiles[profile] = boto3.session.Session(profile_name=profile)
 
     if args.region:
         regions = [args.region]
     else:
         # List all regions available - a region is set just in case the aws cli has no default
-        client_ec2 = boto3.client('ec2', 'eu-west-1', config=boto_config)
-        regions = [region['RegionName'] for region in client_ec2.describe_regions()['Regions']]
-        # regions = ['af-south-1', 'eu-south-1', 'me-south-1', 'ap-east-1' ]
+        for profile, session in profiles.items():
+            # Try each profile until we don't find a working one
+            client_ec2 = session.client('ec2', 'eu-west-1', config=boto_config)
+
+            try:
+                regions = [region['RegionName'] for region in client_ec2.describe_regions()['Regions']]
+            except:
+                continue
+
+            if len(regions) >= 1:
+                break
 
     threads = []
-    q = queue.Queue()
+    cmd_queue = queue.Queue()
 
     for region in regions:
+        for profile, session in profiles.items():
 
-        if args.verbose:
-            print("Searching " + region)
+            if args.verbose:
+                print("Searching " + region + "(" + profile + ")")
 
-        t = threading.Thread(target=cluster_details_t, args=(region, q,), name='details_' + region)
-        t.start()
-        threads.append(t)
+            thread = threading.Thread(target=cluster_details_t, args=(region, profile, session, cmd_queue,), name='details_' + region)
+            thread.start()
+            threads.append(thread)
 
-    for t in threads:
-        t.join(10)
+    for thread in threads:
+        thread.join(10)
 
     cluster_attr = []
 
-    while not q.empty():
-        cluster_attr.append(q.get())
+    while not cmd_queue.empty():
+        cluster_attr.append(cmd_queue.get())
 
     if not cluster_attr:
         print("No clusters found")
-        exit()
+        sys.exit(1)
 
     if args.list or args.search:
-        arrHeaders = ["Name", "Region", "CreationDate", "K8S Version"]
+        table_headers = ["Name", "Region", "CreationDate", "K8S Version", "Profile"]
 
         if args.tag:
-            arrHeaders.append(args.tag)
+            table_headers.append(args.tag)
         if args.search:
-            arrHeaders.append(args.search)
+            table_headers.append(args.search)
 
-        pt = PrettyTable(arrHeaders)
-        pt.align = "l"
+        table = PrettyTable(table_headers)
+        table.align = "l"
 
         for attr in cluster_attr:
-            base_values = [attr['cluster'], attr['region'], attr['createdAt'], attr['version']]
+            base_values = [attr['cluster'], attr['region'], attr['createdAt'], attr['version'], attr['profile']]
 
             if args.tag:
                 base_values.append(attr[args.tag])
@@ -95,9 +128,9 @@ def main():
                 found = pod_search(cmd, args.search)
                 base_values.append(found)
 
-            pt.add_row(base_values)
+            table.add_row(base_values)
 
-        print(pt.get_string(sortby="Name"))
+        print(table.get_string(sortby="Name"))
 
     else:
 
@@ -106,6 +139,7 @@ def main():
         for attr in cluster_attr:
             cluster = attr['cluster']
             region = attr['region']
+            profile = attr['profile']
 
             if args.kubeconfig:
                 base_command = ["aws", "eks", "update-kubeconfig",
@@ -115,9 +149,11 @@ def main():
 
             if args.role_arn:
                 base_command.append("--role-arn " + args.role_arn)
+            elif config_parser[profile]["role_arn"]:
+                base_command.append("--role-arn " + config_parser[profile]["role_arn"])
 
-            if args.profile:
-                base_command.append("--profile " + args.profile)
+            if args.profile or args.all:
+                base_command.append("--profile " + profile)
 
             commands.append(' '.join(base_command).format(region, cluster))
 
@@ -137,21 +173,16 @@ def main():
             except:
                 print("Command not executed")
 
-
 # https://github.com/awsdocs/aws-doc-sdk-examples/blob/master/python/example_code/eks/list_clusters.py
-def list_clusters(max_clusters=10, iter_marker='', aws_region='eu-west-1'):
-    try:
-        eks = boto3.client('eks', region_name=aws_region, config=boto_config)
-    except Exception as e:
-        print(e)
-
+def list_clusters(max_clusters=100, iter_marker='', session='', aws_region='eu-west-1'):
+    eks = session.client('eks', region_name=aws_region, config=boto_config)
     clusters = eks.list_clusters(maxResults=max_clusters, nextToken=iter_marker)
     marker = clusters.get('nextToken')
     return clusters['clusters'], marker
 
 
-def cluster_details(cluster_name, aws_region):
-    eks = boto3.client('eks', region_name=aws_region, config=boto_config)
+def cluster_details(cluster_name, session, aws_region):
+    eks = session.client('eks', region_name=aws_region, config=boto_config)
 
     try:
         response = eks.describe_cluster(name=cluster_name)
@@ -160,10 +191,9 @@ def cluster_details(cluster_name, aws_region):
     return response['cluster']
 
 
-def cluster_details_t(region, q):
-
+def cluster_details_t(region, profile, session, cmd_queue):
     try:
-        clusters, marker = list_clusters(aws_region=region)
+        clusters, marker = list_clusters(session=session, aws_region=region)
     except:
         clusters, marker = [], None
 
@@ -174,15 +204,15 @@ def cluster_details_t(region, q):
     else:
         while True:
             for cluster in clusters:
-                det = cluster_details(cluster, region)
-                createdAt = det['createdAt'].strftime("%Y-%m-%d, %H:%M:%S")
+                det = cluster_details(cluster, session, region)
+                created_at = det['createdAt'].strftime("%Y-%m-%d, %H:%M:%S")
                 version = det['version']
 
                 attributes = {}
 
                 if args.tag:
                     try:
-                        tag = cluster_details(cluster, region)['tags'][args.tag]
+                        tag = cluster_details(cluster, session, region)['tags'][args.tag]
                     except Exception as e:
                         tag = "NotFound"
                         print(str(e))
@@ -191,10 +221,11 @@ def cluster_details_t(region, q):
 
                 attributes['cluster'] = cluster
                 attributes['region'] = region
-                attributes['createdAt'] = createdAt
+                attributes['createdAt'] = created_at
                 attributes['version'] = version
+                attributes['profile'] = profile
 
-                q.put(attributes)
+                cmd_queue.put(attributes)
 
             # If no more clusters exist, exit loop, retrieve the next batch otherwise
             if marker is None:
@@ -210,6 +241,7 @@ def pod_search(cmd, search_term):
     src_command = "kubectl --kubeconfig " + tmp_kubeconfig + " get pods -A"
     get_pods = subprocess.Popen(src_command.split(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     get_pods.wait()
+
     if os.path.isfile(tmp_kubeconfig):
         os.remove(tmp_kubeconfig)
 
